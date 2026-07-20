@@ -1,3 +1,4 @@
+from pathlib import Path
 from .mano_wrapper import MANO
 from .hamer import HAMER
 from .discriminator import Discriminator
@@ -29,11 +30,17 @@ def download_models(folder=CACHE_DIR_HAMER):
                 os.system("tar -xvf " + output_path)
 
 DEFAULT_CHECKPOINT=f'{CACHE_DIR_HAMER}/hamer_ckpts/checkpoints/hamer.ckpt'
-def load_hamer(checkpoint_path=DEFAULT_CHECKPOINT):
+def load_hamer(checkpoint_path=DEFAULT_CHECKPOINT, mano_data_dir=None):
     from pathlib import Path
     from ..configs import get_config
     model_cfg = str(Path(checkpoint_path).parent.parent / 'model_config.yaml')
     model_cfg = get_config(model_cfg, update_cachedir=True)
+    if mano_data_dir is not None:
+        model_cfg.defrost()
+        model_cfg.MANO.MEAN_PARAMS = str(Path(mano_data_dir) / "mano_mean_params.npz")
+        model_cfg.MANO.DATA_DIR = mano_data_dir
+        model_cfg.MANO.MODEL_PATH = str(Path(mano_data_dir) / "mano")
+        model_cfg.freeze()
 
     # Override some config values, to crop bbox correctly
     if (model_cfg.MODEL.BACKBONE.TYPE == 'vit') and ('BBOX_SHAPE' not in model_cfg.MODEL):
