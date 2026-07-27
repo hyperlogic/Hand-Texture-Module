@@ -1,0 +1,49 @@
+[project]
+name = "hand-texture-module"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "chumpy",
+    "detectron2",
+    "einops>=0.8.2",
+    "mmcv==1.7.2",
+    "mmpose",
+    "omegaconf>=2.3.1",
+    "opencv-python>=5.0.0.93",
+    "pyrender>=0.1.45",
+    "pytorch-lightning>=2.6.5",
+    "pytorch3d",
+    "scikit-image>=0.26.0",
+    "setuptools<81",
+    "smplx>=0.1.28",
+    "timm>=1.0.28",
+    "torch>=2.13.0",
+    "torchaudio>=2.11.0",
+    "torchvision>=0.28.0",
+    "webdataset>=1.0.2",
+    "yacs>=0.1.8",
+]
+
+[tool.uv]
+build-constraint-dependencies = ["setuptools<81"]
+
+[tool.uv.extra-build-variables]
+mmcv-full = { MMCV_WITH_OPS = "0" }
+
+[tool.uv.sources]
+mmpose = { path = "third-party/ViTPose", editable = true }
+pytorch3d = { git = "https://github.com/facebookresearch/pytorch3d.git" }
+chumpy = { git = "https://github.com/mattloper/chumpy", rev = "9b045ff" }
+detectron2 = { git = "https://github.com/facebookresearch/detectron2.git" }
+
+[tool.uv.workspace]
+members = []
+exclude = ["third-party/ViTPose"]
+
+[tool.uv.extra-build-dependencies]
+xtcocotools = ["numpy<2", "cython"]
+chumpy = ["pip", "numpy", "setuptools"]
+mmcv-full = ["torch", "numpy"]
+detectron2 = ["torch", "setuptools"]
