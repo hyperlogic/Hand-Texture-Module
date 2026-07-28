@@ -2,6 +2,9 @@ from pathlib import Path
 import torch
 import argparse
 import os
+import subprocess
+import tempfile
+
 import cv2
 import numpy as np
 
@@ -18,11 +21,22 @@ from vitpose_model import ViTPoseModel
 import json
 from typing import Dict, Optional
 
-def main():
+def run_cmd(cmd_line: str) -> None:
+    print(f"run: {cmd_line}")
+    result = subprocess.run(cmd_line, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        msg = f"Error (exit code {result.returncode}):\n{result.stderr}\n{result.stdout}"
+        print(msg)
+        raise RuntimeError(msg)
+    if result.stdout:
+        print(result.stdout)
+
+
+def main(tmp: Path):
     parser = argparse.ArgumentParser(description='HaMeR demo code')
     parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
-    parser.add_argument('--img_folder', type=str, default='images', help='Folder with input images')
-    parser.add_argument('--out_folder', type=str, default='out_demo', help='Output folder to save rendered results')
+    parser.add_argument('--input_video', type=str, help='Input video')
+    parser.add_argument('--output_video', type=str, help='Output video')
     parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also')
     parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
     parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=False, help='If set, save meshes to disk also')
@@ -32,6 +46,15 @@ def main():
     parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
 
     args = parser.parse_args()
+    input_video = Path(args.input_video)
+    output_video = Path(args.output_video)
+
+    # determine the fps, using ffprobe
+    fps_filename = tmp / (output_video.stem + "_fps")
+    run_cmd(f"ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 {input_video} > {fps_filename}")
+    with open(fps_filename) as f:
+        fps = f.read().strip()
+
 
     # Download and load checkpoints
     download_models(CACHE_DIR_HAMER)
@@ -68,18 +91,20 @@ def main():
     renderer = Renderer(model_cfg, faces=model.mano.faces)
 
     # Make output directory if it does not exist
-    os.makedirs(args.out_folder, exist_ok=True)
 
-    # Get all demo images ends with .jpg or .png
-    img_paths = [img for end in args.file_type for img in Path(args.img_folder).glob(end)]
+    # use ffmpg to generate images for each frame
+    frames_wildcard = tmp / "frame_%04d.png"
+    run_cmd(f"ffmpeg -i {input_video} {frames_wildcard}")
+    input_list = sorted(tmp.glob("frame_*.png"))
 
     # Iterate over all images in folder
-    for img_path in img_paths:
-        img_cv2 = cv2.imread(str(img_path))
+    for input_path in input_list:
+        img_cv2 = cv2.imread(str(input_path))
+        assert img_cv2 is not None, f"failed to load {input_path}"
 
         # Detect humans in image
         det_out = detector(img_cv2)
-        img = img_cv2.copy()[:, :, ::-1]
+        img = img_cv2.copy()[:, :, ::-1]  # BGR to RGB
 
         det_instances = det_out['instances']
         valid_idx = (det_instances.pred_classes==0) & (det_instances.scores > 0.5)
@@ -127,7 +152,7 @@ def main():
         all_verts = []
         all_cam_t = []
         all_right = []
-        
+
         for batch in dataloader:
             batch = recursive_to(batch, device)
             with torch.no_grad():
@@ -146,8 +171,6 @@ def main():
             # Render the result
             batch_size = batch['img'].shape[0]
             for n in range(batch_size):
-                # Get filename from path img_path
-                img_fn, _ = os.path.splitext(os.path.basename(img_path))
                 person_id = int(batch['personid'][n])
                 white_img = (torch.ones_like(batch['img'][n]).cpu() - DEFAULT_MEAN[:,None,None]/255) / (DEFAULT_STD[:,None,None]/255)
                 input_patch = batch['img'][n].cpu() * (DEFAULT_STD[:,None,None]/255) + (DEFAULT_MEAN[:,None,None]/255)
@@ -171,7 +194,10 @@ def main():
                 else:
                     final_img = np.concatenate([input_patch, regression_img], axis=1)
 
-                cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{person_id}.png'), 255*final_img[:, :, ::-1])
+                frame = input_path.stem.split('_')[-1]
+                output_path = tmp / f"output_frame_{frame}_{person_id}.jpg"
+                print(f"-> Saving {output_path}")
+                cv2.imwrite(output_path, 255*final_img[:, :, ::-1])
 
                 # Add all verts and cams to list
                 verts = out['pred_vertices'][n].detach().cpu().numpy()
@@ -183,10 +209,13 @@ def main():
                 all_right.append(is_right)
 
                 # Save all meshes to disk
+                """
                 if args.save_mesh:
                     camera_translation = cam_t.copy()
                     tmesh = renderer.vertices_to_trimesh(verts, camera_translation, LIGHT_BLUE, is_right=is_right)
-                    tmesh.export(os.path.join(args.out_folder, f'{img_fn}_{person_id}.obj'))
+                    output_path = tmp / f"output_frame_{frame}_{person_id}.obj"
+                    tmesh.export(output_path)
+                """
 
         # Render front view
         if args.full_frame and len(all_verts) > 0:
@@ -202,7 +231,17 @@ def main():
             input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
             input_img_overlay = input_img[:,:,:3] * (1-cam_view[:,:,3:]) + cam_view[:,:,:3] * cam_view[:,:,3:]
 
-            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_all.jpg'), 255*input_img_overlay[:, :, ::-1])
+            frame = input_path.stem.split('_')[-1]
+            output_path = tmp / f"output_frame_{frame}.jpg"
+
+            print(f"-> Saving2 {output_path}")
+            cv2.imwrite(output_path, 255*input_img_overlay[:, :, ::-1])
+
+    # now concatinate otuput frames into an output video.
+    frames_wildcard = tmp / f"output_frame_%04d.jpg"
+    run_cmd(f"ffmpeg -framerate {fps} -i {frames_wildcard} -c:v libx264 -pix_fmt yuv420p {output_video}")
+
 
 if __name__ == '__main__':
-    main()
+    with tempfile.TemporaryDirectory(prefix="sam_3d_body_") as tmp:
+        main(Path(tmp))

@@ -2,9 +2,7 @@
 
 uv run demo.py \
     --checkpoint _DATA/hamer_ckpts/checkpoints/new_hamer_weights.ckpt \
-    --img_folder example_data \
-    --out_folder demo_out \
+    --input_video ~/data/videos/9_OCLOCK.webm \
+    --output_video ~/Documents/hamer_9_OCLOCK.mp4 \
     --batch_size 48 \
-    --side_view \
-    --save_mesh \
     --full_frame
