@@ -140,6 +140,11 @@ def main(tmp: Path):
                 is_right.append(1)
 
         if len(bboxes) == 0:
+            if args.full_frame:
+                frame = input_path.stem.split('_')[-1]
+                output_path = tmp / f"output_frame_{frame}.jpg"
+                print(f"-> No bboxes {output_path}")
+                cv2.imwrite(output_path, img_cv2)
             continue
 
         boxes = np.stack(bboxes)
@@ -194,10 +199,12 @@ def main(tmp: Path):
                 else:
                     final_img = np.concatenate([input_patch, regression_img], axis=1)
 
+                """
                 frame = input_path.stem.split('_')[-1]
                 output_path = tmp / f"output_frame_{frame}_{person_id}.jpg"
                 print(f"-> Saving {output_path}")
                 cv2.imwrite(output_path, 255*final_img[:, :, ::-1])
+                """
 
                 # Add all verts and cams to list
                 verts = out['pred_vertices'][n].detach().cpu().numpy()
@@ -237,11 +244,12 @@ def main(tmp: Path):
             print(f"-> Saving2 {output_path}")
             cv2.imwrite(output_path, 255*input_img_overlay[:, :, ::-1])
 
+    
     # now concatinate otuput frames into an output video.
     frames_wildcard = tmp / f"output_frame_%04d.jpg"
     run_cmd(f"ffmpeg -framerate {fps} -i {frames_wildcard} -c:v libx264 -pix_fmt yuv420p {output_video}")
 
 
 if __name__ == '__main__':
-    with tempfile.TemporaryDirectory(prefix="sam_3d_body_") as tmp:
+    with tempfile.TemporaryDirectory() as tmp:
         main(Path(tmp))
